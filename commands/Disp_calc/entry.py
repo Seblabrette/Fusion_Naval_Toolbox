@@ -132,6 +132,11 @@ def command_execute(args: adsk.core.CommandEventArgs):
     #Create the surface at the waterline:
     sketch = sketches.add(planeOne)
     courbes_intersection = sketch.intersectWithSketchPlane([recup_object])
+    if sketch.profiles.count == 0:
+        ui.messageBox("La surface prend l'eau à cet enfoncement. Réduisez le tirant d'eau.")
+        sketch.deleteMe()
+        planeOne.deleteMe()
+        return
     patches = rootComp.features.patchFeatures
     patchInput = patches.createInput(sketch.profiles.item(0), adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
     patch = patches.add(patchInput)
@@ -179,6 +184,15 @@ def command_execute(args: adsk.core.CommandEventArgs):
     stitch = stitches.add(stitchInput)
     volume_deplace = stitch.bodies.item(0)
     volume_deplace.name="Volume déplacé"
+    if round(volume_deplace.volume,0)==0:
+        ui.messageBox("La carene est manifestement percée, bouchez le trou avant de mettre à l'eau.")
+        stitch.deleteMe()
+        splitBodyFeat.deleteMe()
+        wet_surf.deleteMe()
+        patch.deleteMe()
+        sketch.deleteMe()
+        planeOne.deleteMe()
+        return
     deplacement = volume_deplace.volume/1000
     #End of program:
     msg="Pour un tirant d'eau de "+str(round(value_draft_cm.value*10,2))+" mm,<br>"
