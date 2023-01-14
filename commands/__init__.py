@@ -5,12 +5,14 @@
 # You need to use aliases (import "entry" as "my_module") assuming you have the default module named "entry".
 from .Devis_Poids import entry as Devis_Poids
 from .Import_Points import entry as Import_Points
+from .Disp_calc import entry as Disp_calc
 
 # TODO add your imported modules to this list.
 # Fusion will automatically call the start() and stop() functions.
 commands = [
     Devis_Poids,
-    Import_Points
+    Import_Points,
+    Disp_calc
 ]
 
 
