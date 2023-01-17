@@ -174,7 +174,7 @@ def command_execute(args: adsk.core.CommandEventArgs):
         # Create sketch point
         for coord in grouped_points[x]:#go through each point of the group at x.
             #Attention: coordinates of point in the local coordinate system of the sketch
-            point = adsk.core.Point3D.create(-coord[2], coord[1],coord[0]) 
+            point = adsk.core.Point3D.create(-coord[2], coord[1],0) #Z=0 to create in the plane.
             # ui.messageBox(str(coord[0])+" / "+str(coord[1])+" / "+str(coord[2]))
             somepoint = sketchPoints.add(point)
     #Conclusion message:
