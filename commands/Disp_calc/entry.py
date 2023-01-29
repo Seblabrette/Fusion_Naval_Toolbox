@@ -194,9 +194,17 @@ def command_execute(args: adsk.core.CommandEventArgs):
         planeOne.deleteMe()
         return
     deplacement = volume_deplace.volume/1000
+
+    #appel à la fonction de calcul des paramètres hydrostatiques sur un volume donné
+    #display_hydrostatics(volume_deplace)
+    
+    #appel à la fonction de calcul de la courbe des aires
+    courbe_des_aires(volume_deplace,20)
+    #TODO: ajouter le nombre de sections dans les inputs
+    #TODO: créer une fonction qui retourne la section max du volume déplacé (pour calcul Cp)
+
     #End of program:
-    msg="Pour un tirant d'eau de "+str(round(value_draft_cm.value*10,2))+" mm,<br>"
-    msg+="Le déplacement est de :"+str(round(deplacement, 2))+" kg."
+    msg="End of program"
     ui.messageBox(msg)
 
 
@@ -240,3 +248,93 @@ def command_destroy(args: adsk.core.CommandEventArgs):
 
     global local_handlers
     local_handlers = []
+
+
+#Fonction de calcul et affichage des paramètres hydrostatiques
+#prend comme input le volume immergé de la carène uniquement.
+def display_hydrostatics(body:adsk.fusion.BRepBody):
+    disp_vol = body.volume
+    water_density = 1.025/1000 #kg/cm3
+    disp_weight = disp_vol*water_density
+    
+    #Find waterplane
+    ref_vector = adsk.core.Vector3D.create(0,0,1)
+    for face in body.faces:
+        point = adsk.core.Point2D.create(0.5,0.5)
+        normal_vector = face.evaluator.getNormalAtParameter(point)[1]
+        if ref_vector.angleTo(normal_vector)<0.01:
+            #Face du plan de flottaison trouvée, on la stocke.
+            waterplane = face
+            break
+    waterplane_area = waterplane.area
+    LWL = waterplane.boundingBox.maxPoint.x - waterplane.boundingBox.minPoint.x #Length at waterline
+    beam_WL = waterplane.boundingBox.maxPoint.y - waterplane.boundingBox.minPoint.y #Beam at waterline
+    wetted_area = body.area - waterplane_area #surface mouillée en cm2
+
+    #centre de flottaison
+    CoB = body.physicalProperties.centerOfMass #Point3D object for center of buoyancy
+    #Position of CoB from Midship
+    x_midship = (waterplane.boundingBox.maxPoint.x + waterplane.boundingBox.minPoint.x)/2
+    pos_CoB_pct = (CoB.x - x_midship)*100/x_midship
+
+
+    msg="Paramètres hydro statiques:"
+    msg+="<br>Déplacement = "+str(round(disp_weight))+" kg"
+    msg+="<br>Longueur Flottaison = "+str(round(LWL/100,3))+" m"
+    msg+="<br>Bau maxi flottaison = "+str(round(beam_WL/100,3))+" m"
+    msg+="<br>Surface mouillée = "+str(round(wetted_area/10000,3))+" m2"
+    msg+="<br>Position Longi du centre de flottaison = "+str(round(pos_CoB_pct,2))+" %"
+    ui.messageBox(msg)
+
+def courbe_des_aires(body:adsk.fusion.BRepBody, sections:int):
+    # Le but est de couper la partie immergée de la carène en plusieurs sections,et pour chacune d'elle
+    # de déterminer l'aire de la section. Ensuite on stocke tout et on trace la courbe.
+    NOMBRE_SECTIONS=sections
+    LWL=body.boundingBox.maxPoint.x-body.boundingBox.minPoint.x
+    start_x = body.boundingBox.minPoint.x
+    planeInput = planes.createInput() #crée objet planeInput pour pouvoir créer des plans.
+    aires=[0 for i in range(NOMBRE_SECTIONS+1) ]
+    pos_x = [0 for i in range(NOMBRE_SECTIONS+1) ]
+    offset_z = body.boundingBox.maxPoint.z #pour aligner la courbe des aires sur la waterline
+    for i in range(NOMBRE_SECTIONS+1):
+        pos_x[i]=start_x+i*LWL/NOMBRE_SECTIONS #position de la section courante
+        #crée un plan décalé à cette position
+        offsetValue = adsk.core.ValueInput.createByReal(pos_x[i])
+        planeInput.setByOffset(rootComp.yZConstructionPlane, offsetValue)
+        planecurrent = planes.add(planeInput)
+        planecurrent.name = "Section @ "+str(round(pos_x[i],1))+" cm"
+        #crée un sketch sur ce plan
+        sketch = sketches.add(planecurrent)
+        sketch.name = "Section @ "+str(round(pos_x[i],1))+" cm"
+        #crée l'intersection du corps étudié avec ce plan
+        sketchEntities = sketch.intersectWithSketchPlane([body])
+        #récupère son aire
+        if sketch.profiles.count == 0:
+            aires[i]=0
+        else:
+            for j in range(sketch.profiles.count): #boucle sur toutes les surfaces du sketch (1 seule normalement)
+                profile_current=sketch.profiles.item(j)
+                aires[i]+=round(profile_current.areaProperties().area,2) #en cm^2
+        #efface ce qu'on a créé
+        sketch.deleteMe()
+        planecurrent.deleteMe()
+    #crée un sketch pour tracer la courbe des aires:
+    pos_y=(body.boundingBox.maxPoint.y+body.boundingBox.minPoint.y)/2
+    offsetValue = adsk.core.ValueInput.createByReal(pos_y)
+    planeInput.setByOffset(rootComp.xZConstructionPlane, offsetValue)
+    planecurrent = planes.add(planeInput)
+    planecurrent.name = "Areas Curve"
+    sketch = sketches.add(planecurrent)
+    sketch.name = "Areas Curve"
+    sketchPoints = sketch.sketchPoints
+    points = adsk.core.ObjectCollection.create()
+    for i in range(NOMBRE_SECTIONS+1):
+        #crée un point3D avec la pos_X en abscisse et l'aire en ordonnée
+        #Attention: coordinates of point in the local coordinate system of the sketch
+        point = adsk.core.Point3D.create(pos_x[i], -aires[i]/10-offset_z,0) #Z=0 to create in the plane.
+        sketchPoints.add(point)
+        points.add(point)
+    spline = sketch.sketchCurves.sketchFittedSplines.add(points)
+
+    msg="Calcul de la courbe des aires terminé."
+    ui.messageBox(msg)
