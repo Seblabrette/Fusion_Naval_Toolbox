@@ -98,6 +98,10 @@ def command_created(args: adsk.core.CommandCreatedEventArgs):
     default_value = adsk.core.ValueInput.createByString('25')
     inputs.addValueInput('draft_input', 'Draft value: ', defaultLengthUnits, default_value)
 
+    #Add slider for selection of number of sections for the areas curves
+    sliderinput = inputs.addIntegerSliderCommandInput('nbsections', "Sections:", 5, 30)
+    sliderinput.valueOne = 10 #sets default value to 10 sections
+
     # TODO Connect to the events that are needed by this command.
     futil.add_handler(args.command.execute, command_execute, local_handlers=local_handlers)
     futil.add_handler(args.command.inputChanged, command_input_changed, local_handlers=local_handlers)
@@ -119,6 +123,9 @@ def command_execute(args: adsk.core.CommandEventArgs):
     value_draft_cm: adsk.core.ValueCommandInput = inputs.itemById('draft_input')
     recup_selection: adsk.core.SelectionCommandInput = inputs.itemById('hull_surf')
     recup_object:adsk.fusion.BRepBody = recup_selection.selection(0).entity
+    sliderinput:adsk.core.IntegerSliderCommandInput = inputs.itemById('nbsections')
+    nb_sections = sliderinput.valueOne #we take value from slider
+
     #Create a plane at the waterline position
     z_min_cm=recup_object.boundingBox.minPoint.z
     offset = z_min_cm+value_draft_cm.value
@@ -199,9 +206,7 @@ def command_execute(args: adsk.core.CommandEventArgs):
     #display_hydrostatics(volume_deplace)
     
     #appel à la fonction de calcul de la courbe des aires
-    courbe_des_aires(volume_deplace,20)
-    #TODO: ajouter le nombre de sections dans les inputs
-    #TODO: créer une fonction qui retourne la section max du volume déplacé (pour calcul Cp)
+    courbe_des_aires(volume_deplace,nb_sections)
 
     #End of program:
     msg="End of program"
@@ -306,18 +311,42 @@ def courbe_des_aires(body:adsk.fusion.BRepBody, sections:int):
         #crée un sketch sur ce plan
         sketch = sketches.add(planecurrent)
         sketch.name = "Section @ "+str(round(pos_x[i],1))+" cm"
-        #crée l'intersection du corps étudié avec ce plan
-        sketchEntities = sketch.intersectWithSketchPlane([body])
+        # crée l'intersection du corps étudié avec ce plan
+        sketch.intersectWithSketchPlane([body])
         #récupère son aire
-        if sketch.profiles.count == 0:
+        if sketch.sketchCurves.count == 0:
+            #TODO: problème identifié, certaines sections ne donnent pas des loops...bizare...mais à résoudre.
             aires[i]=0
         else:
-            for j in range(sketch.profiles.count): #boucle sur toutes les surfaces du sketch (1 seule normalement)
-                profile_current=sketch.profiles.item(j)
-                aires[i]+=round(profile_current.areaProperties().area,2) #en cm^2
+            if sketch.profiles.count==0:
+                #cas particulier où ça ne crée pas un profile (ça devrait tt le tps, mais ça arrive que non)
+                #on recrée une surface avec les courbes du sketch...
+                patches = rootComp.features.patchFeatures
+                patchInput = patches.createInput(sketch.sketchCurves.item(0), adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+                patch = patches.add(patchInput)
+                face=patch.faces.item(0)
+                aires[i]= face.area
+                patch.deleteMe()
+            else:
+                for j in range(sketch.profiles.count): #boucle sur toutes les surfaces du sketch (1 seule normalement)
+                    profile_current=sketch.profiles.item(j)
+                    aires[i]+=round(profile_current.areaProperties().area,2) #en cm^2
         #efface ce qu'on a créé
         sketch.deleteMe()
         planecurrent.deleteMe()
+
+    #trouve la section proche de la section max et les deux qui les entoure:
+    sec=[(0,0),(0,0),(0,0),(0,0),(0,0)] #(aire, pos_x) tuples.
+    for i in range(1,NOMBRE_SECTIONS-1):
+        if (aires[i+1]>aires[i]) and (aires[i+1]>aires[i+2]):
+            sec[0]=(aires[i], pos_x[i])
+            sec[2] = (aires[i+1], pos_x[i+1])
+            sec[4] = (aires[i+2], pos_x[i+2])
+            break
+    #a partir de ces sections encadrantes, on va chercher plus finement
+    precision=0.05 #seuil pour considérer qu'on a la section max.
+    section_max(body,sec,precision)
+
     #crée un sketch pour tracer la courbe des aires:
     pos_y=(body.boundingBox.maxPoint.y+body.boundingBox.minPoint.y)/2
     offsetValue = adsk.core.ValueInput.createByReal(pos_y)
@@ -338,3 +367,46 @@ def courbe_des_aires(body:adsk.fusion.BRepBody, sections:int):
 
     msg="Calcul de la courbe des aires terminé."
     ui.messageBox(msg)
+
+def section_max(body:adsk.fusion.BRepBody,sec,precision:float):
+    start_x = body.boundingBox.minPoint.x
+    trigger=(body.boundingBox.maxPoint.x-body.boundingBox.minPoint.x)*precision
+    planeInput = planes.createInput()
+    counter=0
+    while (abs(sec[4][1]-sec[0][1]) > trigger) and (counter < 100):
+        counter+=1
+        #récupère section entre chaque section inf,bau et sup
+        sec[1] = get_mid_sect(body, sec[0], sec[2], planeInput)
+        sec[3] = get_mid_sect(body, sec[2], sec[4], planeInput)
+        for i in range(3):
+            if (sec[i+1][0]>sec[i][0]) and (sec[i+1][0]>sec[i+2][0]):
+                tmp1 = sec[i]
+                tmp2 = sec[i+1]
+                tmp3 = sec[i+2]                
+                sec[0] = tmp1
+                sec[1] = (0,0)
+                sec[2] = tmp2
+                sec[3] = (0,0)
+                sec[4] = tmp3
+                break
+    msg="section max = "+str(round(sec[2][0],2))+" cm2."
+    msg+="<br> @ x = "+str(round(sec[2][1],2))+" cm."
+    ui.messageBox(msg)
+
+def get_mid_sect(body, tuple_inf, tuple_sup, planeInput):
+    pos_x=(tuple_inf[1]+tuple_sup[1])/2 #position de la section courante
+    #crée un plan décalé à cette position
+    offsetValue = adsk.core.ValueInput.createByReal(pos_x)
+    planeInput.setByOffset(rootComp.yZConstructionPlane, offsetValue)
+    planecurrent = planes.add(planeInput)
+    #crée un sketch sur ce plan
+    sketch = sketches.add(planecurrent)
+    #crée l'intersection du corps étudié avec ce plan
+    sketchEntities = sketch.intersectWithSketchPlane([body])
+    aire=0
+    for j in range(sketch.profiles.count): #boucle sur toutes les surfaces du sketch (1 seule normalement)
+        profile_current=sketch.profiles.item(j)
+        aire +=profile_current.areaProperties().area
+    sketch.deleteMe()
+    planecurrent.deleteMe() 
+    return (aire,pos_x)
