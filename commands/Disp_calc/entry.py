@@ -19,7 +19,7 @@ CMD_NAME = 'Calculer déplacement'
 CMD_Description = 'Calcule le déplacement de carène en fonction du tirant d\'eau'
 
 # Specify that the command will be promoted to the panel.
-IS_PROMOTED = True
+IS_PROMOTED = False
 
 # TODO *** Define the location where the command button will be created. ***
 # This is done by specifying the workspace, the tab, and the panel, and the 
